@@ -42,7 +42,7 @@ And you're good to go!
 
 ## Usage
 
-Simply pass as an argument a video URL [from any website supported by *youtube-dl*](https://ytdl-org.github.io/youtube-dl/supportedsites.html), like this:
+Simply pass as an argument a video URL, like this:
 
 ```bash
 python euridice.py https://www.youtube.com/watch?v=ft_G8bKieNc
