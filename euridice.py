@@ -3,11 +3,32 @@ import os
 import subprocess
 import cv2
 import img2pdf
+import re
+
+def get_video_title(url):
+    print("Fetching video title...")
+    try:
+        # Ask yt-dlp to just print the title of the video
+        result = subprocess.run(
+            ["yt-dlp", "--print", "title", url],
+            capture_output=True, text=True, check=True
+        )
+        title = result.stdout.strip()
+        
+        # Strip out characters that are illegal in file paths (\ / * ? " < > | :)
+        clean_title = re.sub(r'[\\/*?:"<>|]', "", title)
+        
+        # NEW: Replace all spaces with underscores
+        clean_title = clean_title.replace(" ", "_")
+        
+        # Fallback to "score" just in case the title was entirely emojis/illegal characters
+        return clean_title if clean_title else "score"
+    except subprocess.CalledProcessError:
+        print("Warning: Could not fetch title, defaulting to 'score'")
+        return "score"
 
 def download_video(url, output_filename="video.mp4"):
     print("Downloading video with yt-dlp (forcing H.264 codec for compatibility)...")
-    
-    # Force h264 codec
     cmd = [
         "yt-dlp", 
         "-S", "vcodec:h264", 
@@ -27,8 +48,7 @@ def extract_and_filter_frames(video_path, threshold_percent=0.01):
         sys.exit(1)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
-    # Check 1 frame every 5 seconds
-    frame_skip = int(fps * 5)
+    frame_skip = int(fps * 2) # skip frames distant less than 2 seconds 
 
     saved_frames = []
     last_kept_gray = None
@@ -38,27 +58,20 @@ def extract_and_filter_frames(video_path, threshold_percent=0.01):
 
     while success:
         if count % frame_skip == 0:
-            # Convert frame to grayscale for easier comparison
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             if last_kept_gray is None:
-                # Always keep the very first frame
                 saved_frames.append(frame)
                 last_kept_gray = gray
                 print("Saved page 1")
             else:
-                # Compare current frame to the last kept frame
                 diff = cv2.absdiff(last_kept_gray, gray)
-                
-                # If a pixel changed by a value of 30 (out of 255), flag it as "changed"
                 _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+                
                 changed_pixels = cv2.countNonZero(thresh)
                 total_pixels = gray.size
-                
-                # Calculate the percentage of the image that changed
                 percent_changed = changed_pixels / total_pixels
 
-                # If more than the threshold (default 1%) changed, it's a new page!
                 if percent_changed > threshold_percent:
                     saved_frames.append(frame)
                     last_kept_gray = gray
@@ -78,16 +91,13 @@ def save_to_pdf(frames, output_filename="score.pdf"):
 
     image_bytes_list = []
     
-    # Compress each frame into JPEG bytes in memory
     for f in frames:
-        # cv2.imencode returns a tuple: (success_boolean, memory_buffer)
         success, buffer = cv2.imencode(".jpg", f)
         if success:
             image_bytes_list.append(buffer.tobytes())
         else:
             print("Warning: Failed to encode a frame.")
 
-    # Write the in-memory images directly to a PDF file
     if image_bytes_list:
         with open(output_filename, "wb") as f_out:
             f_out.write(img2pdf.convert(image_bytes_list))
@@ -99,16 +109,24 @@ if __name__ == "__main__":
 
     url = sys.argv[1]
     video_file = "temp_video.mp4"
-    pdf_file = "score.pdf"
+    
+    # 1. Fetch and clean the title dynamically
+    video_title = get_video_title(url)
+    pdf_file = f"{video_title}.pdf"
 
     try:
+        # 2. Download to a temporary file
         download_video(url, video_file)
-        # threshold_percent=0.01 means "if 1% of the screen changes, capture it"
+        
+        # 3. Process frames in memory
         frames = extract_and_filter_frames(video_file, threshold_percent=0.01)
+        
+        # 4. Save to PDF using the dynamic title
         save_to_pdf(frames, pdf_file)
-        print(f"Done! Score saved beautifully as {pdf_file}")
+        print(f"Done! Score saved beautifully as '{pdf_file}'")
+        
     finally:
-        # Always clean up the video file, even if the script crashes
+        # 5. Always clean up
         if os.path.exists(video_file):
             os.remove(video_file)
             print("Cleaned up temporary video.")
